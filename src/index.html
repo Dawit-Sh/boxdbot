@@ -1,13 +1,4 @@
-import io
-import re
-from flask import Flask, jsonify, render_template_string, request, send_file
-from scraper import is_valid_film_url, scrape_film, to_markdown
-
-app = Flask(__name__)
-
-# ── HTML template ──────────────────────────────────────────────────────────────
-
-HTML = """<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
@@ -105,6 +96,7 @@ HTML = """<!DOCTYPE html>
     font-size: 0.85rem;
     margin-top: 10px;
     display: none;
+    white-space: pre-line;
   }
 
   .result-card {
@@ -211,15 +203,17 @@ HTML = """<!DOCTYPE html>
 </div>
 
 <script>
+  const { invoke } = window.__TAURI__.core;
+
   let currentMd = "";
   let currentFilename = "film";
 
-  const urlInput  = document.getElementById("url");
-  const scrapeBtn = document.getElementById("scrape-btn");
-  const errorEl   = document.getElementById("error");
-  const spinner   = document.getElementById("spinner");
+  const urlInput   = document.getElementById("url");
+  const scrapeBtn  = document.getElementById("scrape-btn");
+  const errorEl    = document.getElementById("error");
+  const spinner    = document.getElementById("spinner");
   const resultCard = document.getElementById("result-card");
-  const output    = document.getElementById("output");
+  const output     = document.getElementById("output");
 
   urlInput.addEventListener("keydown", e => { if (e.key === "Enter") scrape(); });
 
@@ -238,24 +232,13 @@ HTML = """<!DOCTYPE html>
     spinner.style.display = "block";
 
     try {
-      const res = await fetch("/scrape", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
-      });
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.error || "Scraping failed.");
-        return;
-      }
-
+      const data = await invoke("scrape", { url });
       currentMd = data.markdown;
       currentFilename = slugify(data.title || "film");
       output.textContent = currentMd;
       resultCard.style.display = "block";
-    } catch (e) {
-      setError("Network error — is the server running?");
+    } catch (err) {
+      setError(typeof err === "string" ? err : "Scraping failed.");
     } finally {
       scrapeBtn.disabled = false;
       spinner.style.display = "none";
@@ -263,16 +246,16 @@ HTML = """<!DOCTYPE html>
   }
 
   async function downloadMd() {
-    const res = await fetch("/download", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ markdown: currentMd, filename: currentFilename }),
-    });
-    const blob = await res.blob();
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = currentFilename + ".md";
-    a.click();
+    try {
+      const savedPath = await invoke("save_markdown", { markdown: currentMd, filename: currentFilename });
+      const btn = event.target;
+      const orig = btn.textContent;
+      btn.textContent = "Saved ✓";
+      btn.title = savedPath;
+      setTimeout(() => { btn.textContent = orig; btn.title = ""; }, 2000);
+    } catch (err) {
+      setError(typeof err === "string" ? err : "Failed to save file.");
+    }
   }
 
   function copyMd() {
@@ -289,41 +272,4 @@ HTML = """<!DOCTYPE html>
   }
 </script>
 </body>
-</html>"""
-
-
-# ── routes ─────────────────────────────────────────────────────────────────────
-
-@app.route("/")
-def index():
-    return render_template_string(HTML)
-
-
-@app.route("/scrape", methods=["POST"])
-def scrape():
-    url = (request.json or {}).get("url", "").strip()
-    if not url:
-        return jsonify({"error": "No URL provided."}), 400
-    if not is_valid_film_url(url):
-        return jsonify({"error": "Not a valid Letterboxd film URL.\nExpected: https://letterboxd.com/film/<slug>/"}), 400
-    try:
-        film = scrape_film(url)
-        md = to_markdown(film)
-        return jsonify({"markdown": md, "title": film.title, "year": film.year})
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 404
-    except Exception as e:
-        return jsonify({"error": f"Scrape failed: {e}"}), 500
-
-
-@app.route("/download", methods=["POST"])
-def download():
-    body = request.json or {}
-    md = body.get("markdown", "")
-    filename = re.sub(r"[^a-z0-9\-]", "", body.get("filename", "film")) or "film"
-    buf = io.BytesIO(md.encode("utf-8"))
-    return send_file(buf, as_attachment=True, download_name=f"{filename}.md", mimetype="text/markdown")
-
-
-if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+</html>
