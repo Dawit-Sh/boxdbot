@@ -98,8 +98,15 @@ def scrape_film(url: str) -> dict:
 
     tagline = meta(prop="og:description")
 
+    studios = []
+    for a in soup.select("a[href*='/studio/']"):
+        s = a.get_text().strip()
+        if s and s not in studios:
+            studios.append(s)
+
     return dict(url=url, title=title, year=year, directors=directors, cast=cast,
-                rating=rating, runtime=runtime, genres=genres, synopsis=synopsis, tagline=tagline)
+                rating=rating, runtime=runtime, genres=genres, synopsis=synopsis,
+                tagline=tagline, studios=studios)
 
 
 def to_markdown(film: dict) -> str:
@@ -123,6 +130,9 @@ def to_markdown(film: dict) -> str:
         lines.append(f"**Rating:** {film['rating']}")
     if film["genres"]:
         lines.append(f"**Genres:** {', '.join(film['genres'])}")
+    if film["studios"]:
+        label = "Studios" if len(film["studios"]) > 1 else "Studio"
+        lines.append(f"**{label}:** {', '.join(film['studios'])}")
 
     if film["cast"]:
         lines += ["", "## Cast"]
